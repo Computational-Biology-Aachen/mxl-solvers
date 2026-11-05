@@ -2,7 +2,7 @@
 # Copy solver files into a consuming repo and record what was copied.
 #
 #   scripts/vendor.sh <dest-dir> <file>...
-#   e.g. scripts/vendor.sh ../../pkg-py/MxlPy/native/c/vendor c/radau5.c licences/HAIRER-LICENCE.txt
+#   e.g. scripts/vendor.sh ../../pkg-py/mxlpy-native/c/vendor c/radau5.c licences/HAIRER-LICENCE.txt
 #
 # Files are given relative to this repo and land flat in <dest-dir>. <dest-dir>/VENDORED
 # records the commit and a sha256 per file, which the consumer's tests check, so a

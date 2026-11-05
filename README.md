@@ -1,6 +1,6 @@
 # mxl-solvers
 
-The C ODE solvers shared by [MxlPy](https://github.com/Computational-Biology-Aachen/MxlPy)'s `Native` integrator and [mxlweb-core](https://github.com/Computational-Biology-Aachen/mxlweb-core)'s WASM backend. Both repos used to keep their own copies, which drifted apart. This repo is now the only place these files change.
+The C ODE solvers shared by [MxlPy](https://github.com/Computational-Biology-Aachen/MxlPy)'s `Native` integrator (via [mxlpy-native](https://github.com/Computational-Biology-Aachen/mxlpy-native)) and [mxlweb-core](https://github.com/Computational-Biology-Aachen/mxlweb-core)'s WASM backend. Both repos used to keep their own copies, which drifted apart. This repo is now the only place these files change.
 
 | File | Solver | Origin | Licence |
 |---|---|---|---|
@@ -41,5 +41,5 @@ scripts/vendor.sh <dest-dir> c/radau5.c c/decsol.c ... licences/HAIRER-LICENCE.t
 The script needs a clean, pushed commit. It writes `<dest-dir>/VENDORED` with that commit's SHA and a sha256 for every file, and each consuming repo has a test that checks these hashes. To fix a solver, change it here, push, then re-vendor into the consumers.
 
 Current consumers:
-- MxlPy: `native/c/vendor/`, built into the `mxlpy-native` wheel and `solvers.wasm`.
+- [mxlpy-native](https://github.com/Computational-Biology-Aachen/mxlpy-native): `c/vendor/`, built into its wheels and into MxlPy's `solvers.wasm`.
 - mxlweb-core: `src-c/`, built into `static/wasm/radau5.wasm`. Its wrappers and minpack stay in mxlweb-core.

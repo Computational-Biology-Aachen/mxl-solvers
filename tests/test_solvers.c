@@ -1,4 +1,4 @@
-/* Reference problems for every solver in c/. Errors are relative, max-norm unless
+/* Reference problems for every solver in c/ and c/sundials. Errors are relative, max-norm unless
  * stated. Build and run with `make test`. */
 #include <math.h>
 #include <stdio.h>
@@ -7,6 +7,12 @@
 
 #include "f2c.h"
 #include "lsoda.h"
+
+#include <cvode/cvode.h>
+#include <nvector/nvector_serial.h>
+#include <sunlinsol/sunlinsol_dense.h>
+#include <sunmatrix/sunmatrix_dense.h>
+#include <sunnonlinsol/sunnonlinsol_fixedpoint.h>
 
 extern int radau5_(integer *n, U_fp fcn, doublereal *x, doublereal *y, doublereal *xend, doublereal *h,
                    doublereal *rtol, doublereal *atol, integer *itol, U_fp jac, integer *ijac, integer *mljac,
@@ -98,6 +104,45 @@ static int solve_lsoda(Rhs f, int n, double t0, double t1, double *y, double rto
     return istate;
 }
 
+static int cvode_rhs(sunrealtype t, N_Vector y, N_Vector dy, void *user_data) {
+    (void)user_data;
+    g_rhs((int)N_VGetLength(y), t, N_VGetArrayPointer(y), N_VGetArrayPointer(dy));
+    return 0;
+}
+
+/* BDF with Newton iteration and a dense difference-quotient Jacobian, or Adams with
+ * fixed-point iteration. Returns CVODE's flag: CV_SUCCESS or negative. */
+static int solve_cvode(Rhs f, int n, double t0, double t1, double *y, double rtol, double atol, int adams) {
+    SUNContext ctx;
+    if (SUNContext_Create(SUN_COMM_NULL, &ctx) != 0) return -99;
+    N_Vector v = N_VMake_Serial(n, y, ctx);
+    void *mem = CVodeCreate(adams ? CV_ADAMS : CV_BDF, ctx);
+    SUNMatrix A = NULL;
+    SUNLinearSolver ls = NULL;
+    SUNNonlinearSolver nls = NULL;
+    g_rhs = f;
+    int flag = CVodeInit(mem, cvode_rhs, t0, v);
+    if (flag == CV_SUCCESS) flag = CVodeSStolerances(mem, rtol, atol);
+    if (flag == CV_SUCCESS) flag = CVodeSetMaxNumSteps(mem, 100000);
+    if (flag == CV_SUCCESS && adams) {
+        nls = SUNNonlinSol_FixedPoint(v, 0, ctx);
+        flag = CVodeSetNonlinearSolver(mem, nls);
+    } else if (flag == CV_SUCCESS) {
+        A = SUNDenseMatrix(n, n, ctx);
+        ls = SUNLinSol_Dense(v, A, ctx);
+        flag = CVodeSetLinearSolver(mem, ls, A);
+    }
+    double t = t0;
+    if (flag == CV_SUCCESS) flag = CVode(mem, t1, v, &t, CV_NORMAL);
+    CVodeFree(&mem);
+    SUNNonlinSolFree(nls);
+    SUNLinSolFree(ls);
+    SUNMatDestroy(A);
+    N_VDestroy(v);
+    SUNContext_Free(&ctx);
+    return flag;
+}
+
 static double rel_err(const double *got, const double *want, int n) {
     double worst = 0.0;
     for (int i = 0; i < n; i++) {
@@ -128,31 +173,39 @@ int main(void) {
         check(jt == 2 ? "robertson lsoda (full jacobian)" : "robertson lsoda (banded jacobian)", s == 2,
               rel_err(y, rob_ref, 3), 1e-6);
     }
+    y[0] = 1; y[1] = 0; y[2] = 0;
+    s = solve_cvode(robertson, 3, 0, 40, y, 1e-10, 1e-14, 0);
+    check("robertson cvode bdf", s == CV_SUCCESS, rel_err(y, rob_ref, 3), 1e-6);
 
     /* Lotka-Volterra over many periods: the first integral must stay constant. */
     const double lv0[2] = {1.0, 1.0};
     const double inv0 = lv_invariant(lv0);
-    const char *lv_names[] = {"lotka-volterra lsoda", "lotka-volterra dopri5", "lotka-volterra dop853",
-                              "lotka-volterra radau5"};
-    for (int k = 0; k < 4; k++) {
+    const char *lv_names[] = {"lotka-volterra lsoda",  "lotka-volterra dopri5",     "lotka-volterra dop853",
+                              "lotka-volterra radau5", "lotka-volterra cvode adams", "lotka-volterra cvode bdf"};
+    for (int k = 0; k < 6; k++) {
         memcpy(y, lv0, sizeof lv0);
         if (k == 0) s = solve_lsoda(lotka_volterra, 2, 0, 50, y, 1e-10, 1e-12, 2) == 2;
         else if (k == 1) s = solve_dopri(5, lotka_volterra, 2, 0, 50, y, 1e-10, 1e-12) > 0;
         else if (k == 2) s = solve_dopri(853, lotka_volterra, 2, 0, 50, y, 1e-10, 1e-12) > 0;
-        else s = solve_radau5(lotka_volterra, 2, 0, 50, y, 1e-10, 1e-12) > 0;
-        check(lv_names[k], s, fabs(lv_invariant(y) - inv0) / fabs(inv0), 1e-7);
+        else if (k == 3) s = solve_radau5(lotka_volterra, 2, 0, 50, y, 1e-10, 1e-12) > 0;
+        else s = solve_cvode(lotka_volterra, 2, 0, 50, y, 1e-10, 1e-12, k == 4) == CV_SUCCESS;
+        /* BDF stops at order 5 and is meant for stiff problems: on these non-stiff orbits
+         * its global error is about 10x that of the others at the same tolerance. */
+        check(lv_names[k], s, fabs(lv_invariant(y) - inv0) / fabs(inv0), k == 5 ? 1e-6 : 1e-7);
     }
 
     /* Van der Pol (mu = 1): every solver agrees with DOP853 at a tight tolerance. */
     double ref[2] = {2.0, 0.0};
     solve_dopri(853, van_der_pol, 2, 0, 20, ref, 1e-13, 1e-13);
-    const char *vdp_names[] = {"van der pol lsoda", "van der pol dopri5", "van der pol radau5"};
-    for (int k = 0; k < 3; k++) {
+    const char *vdp_names[] = {"van der pol lsoda", "van der pol dopri5", "van der pol radau5",
+                               "van der pol cvode adams", "van der pol cvode bdf"};
+    for (int k = 0; k < 5; k++) {
         y[0] = 2.0; y[1] = 0.0;
         if (k == 0) s = solve_lsoda(van_der_pol, 2, 0, 20, y, 1e-10, 1e-10, 2) == 2;
         else if (k == 1) s = solve_dopri(5, van_der_pol, 2, 0, 20, y, 1e-10, 1e-10) > 0;
-        else s = solve_radau5(van_der_pol, 2, 0, 20, y, 1e-10, 1e-10) > 0;
-        check(vdp_names[k], s, rel_err(y, ref, 2), 1e-6);
+        else if (k == 2) s = solve_radau5(van_der_pol, 2, 0, 20, y, 1e-10, 1e-10) > 0;
+        else s = solve_cvode(van_der_pol, 2, 0, 20, y, 1e-10, 1e-10, k == 3) == CV_SUCCESS;
+        check(vdp_names[k], s, rel_err(y, ref, 2), k == 4 ? 1e-5 : 1e-6); /* BDF: see above */
     }
 
     printf("%s\n", failures ? "FAILED" : "all passed");

@@ -12,7 +12,7 @@ The C ODE solvers and fit drivers shared by [MxlPy](https://github.com/Computati
 | `c/sundials/` | CVODE: variable-order BDF (stiff) and Adams-Moulton (non-stiff), with dense/band matrices, the dense direct linear solver and Newton/fixed-point iteration | [SUNDIALS](https://github.com/LLNL/sundials) v7.9.0 (tag `v7.9.0`), upstream layout, unchanged except the two config headers (below) | `licences/SUNDIALS-LICENCE.txt` (BSD-3-Clause), `licences/SUNDIALS-NOTICE.txt` |
 | `c/radau5_wrapper.c`, `c/solver_common.{c,h}` | Single-segment drivers for RADAU5, DOP853, DOPRI5 and LSODA, the registered model function and the output buffer / exact output grid | Written for mxlweb-core | `LICENSE` |
 | `c/fit_experiments.{c,h}` | Experiment layout of the fit drivers: time courses with piecewise-constant parameter protocols and steady states, residuals | Written for mxlweb-core | `LICENSE` |
-| `c/fit_wrapper.c`, `c/jacobian_wrapper.c`, `c/adjoint_wrapper.c` | Fit drivers: Levenberg-Marquardt with finite differences (`lmdif`) or forward sensitivities (`lmder`, an augmented system of states and sensitivities), and Adam over the continuous adjoint | Written for mxlweb-core | `LICENSE` |
+| `c/fit_wrapper.c`, `c/jacobian_wrapper.c`, `c/adjoint_wrapper.c` | Fit drivers: Levenberg-Marquardt with finite differences (`lmdif`) or forward sensitivities (`lmder`, an augmented system of states and sensitivities), and Adam over the continuous adjoint; `adjoint_vjp`, one adjoint gradient (vector-Jacobian product) for MxlPy's fits | Written for mxlweb-core and MxlPy | `LICENSE` |
 | `c/minpack/` | `lmdif`, `lmder` and their helpers | [cminpack](https://github.com/devernay/cminpack) | `c/minpack/COPYRIGHT.txt` |
 | `c/blaslapack_declarations.h`, `c/mxs_lapack.c` | The four LAPACK routines `lsoda.c` calls (`dgetrf`/`dgetrs`/`dgbtrf`/`dgbtrs`), unblocked | Written here; replaces SciPy's header of the same name so `lsoda.c` builds without BLAS | `LICENSE` |
 
@@ -67,7 +67,7 @@ make test   # reference problems for every solver, as relative errors
 make lint   # -Wall -Wextra -Werror on the code written here
 ```
 
-`tests/test_fit.c` fits problems with known optima: exponential decay with both Levenberg-Marquardt drivers (RADAU5 and LSODA, linear and log parameters) to 1e-8 relative precision, and the parameter ratio of a reversible reaction at steady state.
+`tests/test_fit.c` fits problems with known optima: exponential decay with both Levenberg-Marquardt drivers (RADAU5 and LSODA, linear and log parameters) to 1e-8 relative precision, and the parameter ratio of a reversible reaction at steady state. It checks `adjoint_vjp` against analytic gradients (exponential decay with a state and a derived target on RADAU5, LSODA and DOPRI5, and a reversible reaction's steady state with its conserved total) to 1e-6 relative precision, and that Adam over the adjoint fits the decay rate.
 
 `tests/test_solvers.c` checks Robertson against Hairer & Wanner's reference values (RADAU5, LSODA with full and banded Jacobians, and CVODE BDF). It checks that Lotka-Volterra's first integral stays constant (LSODA, DOPRI5, DOP853, RADAU5, CVODE Adams and BDF), and that Van der Pol agrees with a tight DOP853 solution.
 

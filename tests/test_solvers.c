@@ -83,8 +83,10 @@ static int solve_dopri(int which, Rhs f, int n, double t0, double t1, double *y,
     return (int)idid;
 }
 
-/* jt = 2: internal full Jacobian; jt = 5: internal banded Jacobian with ml = mu = n - 1. */
-static int solve_lsoda(Rhs f, int n, double t0, double t1, double *y, double rtol, double atol, int jt) {
+/* jt = 2: internal full Jacobian; jt = 5: internal banded Jacobian with ml = mu = n - 1.
+ * hmin is the minimum step size (RWORK(7)), 0 for none. */
+static int solve_lsoda(Rhs f, int n, double t0, double t1, double *y, double rtol, double atol, int jt,
+                       double hmin) {
     int ml = n - 1, mu = n - 1;
     int lmat = jt == 2 ? n * n + 2 : (2 * ml + mu + 1) * n + 2;
     int lrn = 20 + n * 13 + 3 * n, lrs = 20 + n * 6 + 3 * n + lmat;
@@ -95,6 +97,7 @@ static int solve_lsoda(Rhs f, int n, double t0, double t1, double *y, double rto
     iwork[0] = ml;
     iwork[1] = mu;
     iwork[5] = 100000; /* mxstep */
+    rwork[6] = hmin;
     double t = t0, tout = t1;
     lsoda_common_struct_t S = {0};
     g_rhs = f;
@@ -169,10 +172,15 @@ int main(void) {
     check("robertson radau5", s > 0, rel_err(y, rob_ref, 3), 1e-6);
     for (int jt = 2; jt <= 5; jt += 3) {
         y[0] = 1; y[1] = 0; y[2] = 0;
-        s = solve_lsoda(robertson, 3, 0, 40, y, 1e-10, 1e-14, jt);
+        s = solve_lsoda(robertson, 3, 0, 40, y, 1e-10, 1e-14, jt, 0.0);
         check(jt == 2 ? "robertson lsoda (full jacobian)" : "robertson lsoda (banded jacobian)", s == 2,
               rel_err(y, rob_ref, 3), 1e-6);
     }
+    /* Robertson's initial transient needs steps far below 1e-2, so LSODA must honour the
+     * minimum step and stop (istate -4 or -5) instead of quietly taking smaller ones. */
+    y[0] = 1; y[1] = 0; y[2] = 0;
+    s = solve_lsoda(robertson, 3, 0, 40, y, 1e-10, 1e-14, 2, 1e-2);
+    check("robertson lsoda honours hmin", s == -4 || s == -5, 0.0, 0.0);
     y[0] = 1; y[1] = 0; y[2] = 0;
     s = solve_cvode(robertson, 3, 0, 40, y, 1e-10, 1e-14, 0);
     check("robertson cvode bdf", s == CV_SUCCESS, rel_err(y, rob_ref, 3), 1e-6);
@@ -184,7 +192,7 @@ int main(void) {
                               "lotka-volterra radau5", "lotka-volterra cvode adams", "lotka-volterra cvode bdf"};
     for (int k = 0; k < 6; k++) {
         memcpy(y, lv0, sizeof lv0);
-        if (k == 0) s = solve_lsoda(lotka_volterra, 2, 0, 50, y, 1e-10, 1e-12, 2) == 2;
+        if (k == 0) s = solve_lsoda(lotka_volterra, 2, 0, 50, y, 1e-10, 1e-12, 2, 0.0) == 2;
         else if (k == 1) s = solve_dopri(5, lotka_volterra, 2, 0, 50, y, 1e-10, 1e-12) > 0;
         else if (k == 2) s = solve_dopri(853, lotka_volterra, 2, 0, 50, y, 1e-10, 1e-12) > 0;
         else if (k == 3) s = solve_radau5(lotka_volterra, 2, 0, 50, y, 1e-10, 1e-12) > 0;
@@ -201,7 +209,7 @@ int main(void) {
                                "van der pol cvode adams", "van der pol cvode bdf"};
     for (int k = 0; k < 5; k++) {
         y[0] = 2.0; y[1] = 0.0;
-        if (k == 0) s = solve_lsoda(van_der_pol, 2, 0, 20, y, 1e-10, 1e-10, 2) == 2;
+        if (k == 0) s = solve_lsoda(van_der_pol, 2, 0, 20, y, 1e-10, 1e-10, 2, 0.0) == 2;
         else if (k == 1) s = solve_dopri(5, van_der_pol, 2, 0, 20, y, 1e-10, 1e-10) > 0;
         else if (k == 2) s = solve_radau5(van_der_pol, 2, 0, 20, y, 1e-10, 1e-10) > 0;
         else s = solve_cvode(van_der_pol, 2, 0, 20, y, 1e-10, 1e-10, k == 3) == CV_SUCCESS;

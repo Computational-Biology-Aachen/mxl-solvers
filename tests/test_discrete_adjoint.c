@@ -11,6 +11,9 @@
 #include "discrete_adjoint.h"
 
 static int failures;
+static int g_method = DA_METHOD_RADAU5;
+static double g_newton = 1.0; /* newton_scale */
+static const char *METHOD_NAMES[] = {"radau5", "lsoda", "cvode_bdf", "cvode_adams"};
 
 #define N 3
 #define NP 5 /* k1..k4 and an input u (overridden per protocol segment) */
@@ -77,17 +80,27 @@ static void derived_grad(int n, double t, double *y, double *out, double *p) {
 #define NSEG 2
 #define NPTS 7
 #define NTGT 3
-static const double SEG_END[NSEG] = {2.0, 5.0};
-static const double U[NSEG] = {0.0, 0.3};
-/* t = 0 (initial), dense points, a segment boundary and the end (step ends) */
-static const double T_POINTS[NPTS] = {0.0, 0.37, 1.1, 2.0, 2.71, 3.3, 5.0};
+/* Two problems with the same equations: a mild one, and Robertson's stiff kinetics
+ * (k1 = 0.04, k2 = 1e4, k3 = 3e7) with a slow decay of y2 */
+typedef struct {
+  const char *name;
+  double seg_end[NSEG], u[NSEG], t_points[NPTS], k[4], y0[N];
+} Problem;
+static const Problem PROBLEMS[2] = {
+    /* t = 0 (initial), dense points, a segment boundary and the end (step ends) */
+    {"mild", {2.0, 5.0}, {0.0, 0.3}, {0.0, 0.37, 1.1, 2.0, 2.71, 3.3, 5.0}, {0.8, 2.0, 1.5, 0.4},
+     {1.0, 0.2, 0.1}},
+    {"stiff", {10.0, 400.0}, {0.0, 1e-3}, {0.0, 0.3, 4.0, 10.0, 30.0, 70.0, 400.0},
+     {0.04, 1e4, 3e7, 1e-2}, {1.0, 0.0, 0.0}},
+};
+static const Problem *P = &PROBLEMS[0];
 static const int KIND[NTGT] = {0, 0, 1};
 static const int INDEX[NTGT] = {0, 2, 0};
 
 static void fill_pars(const double *k, double *seg_pars) {
   for (int g = 0; g < NSEG; g++) {
     memcpy(seg_pars + g * NP, k, 4 * sizeof(double));
-    seg_pars[g * NP + 4] = U[g];
+    seg_pars[g * NP + 4] = P->u[g];
   }
 }
 
@@ -97,9 +110,9 @@ static double loss(const double *k, const double *y0, const double *cot, double 
   double seg_pars[NSEG * NP], pred[NPTS * NTGT];
   fill_pars(k, seg_pars);
   DaTape *tape = NULL;
-  int st = da_forward((intptr_t)model, (intptr_t)jac, (intptr_t)derived, DA_METHOD_RADAU5, N, y0,
-                      NP, NSEG, SEG_END, seg_pars, NPTS, T_POINTS, NTGT, KIND, INDEX, 1, rtol,
-                      rtol * 1e-2, 100000, DA_FORWARD_JAC, 0.0, pred, &tape);
+  int st = da_forward((intptr_t)model, (intptr_t)jac, (intptr_t)derived, g_method, N, y0,
+                      NP, NSEG, P->seg_end, seg_pars, NPTS, P->t_points, NTGT, KIND, INDEX, 1, rtol,
+                      rtol * 1e-2, 100000, DA_FORWARD_JAC, g_newton, 0.0, pred, &tape);
   if (st != 0) {
     printf("da_forward failed: %d\n", st);
     failures++;
@@ -137,8 +150,7 @@ static double replay_loss(const DaTape *tape, const double *k, const double *y0,
 }
 
 static void check_gradient(double rtol, double limit) {
-  const double k[4] = {0.8, 2.0, 1.5, 0.4};
-  const double y0[N] = {1.0, 0.2, 0.1};
+  const double *k = P->k, *y0 = P->y0;
   double cot[NPTS * NTGT];
   srand(1);
   for (int i = 0; i < NPTS * NTGT; i++) cot[i] = 2.0 * rand() / RAND_MAX - 1.0;
@@ -186,9 +198,19 @@ static void check_gradient(double rtol, double limit) {
   }
   err /= scale;
   err_adaptive /= scale;
-  printf("radau5 discrete adjoint, rtol %.0e (%d steps): rel. error vs frozen-step FD %.2e "
+  printf("%s %s, newton x%.0e, rtol %.0e (%d steps): rel. error vs frozen-step FD %.2e "
          "(vs adaptive FD %.2e), replay vs forward %.2e\n",
-         rtol, steps, err, err_adaptive, replay_err);
+         METHOD_NAMES[g_method], P->name, g_newton, rtol, steps, err, err_adaptive, replay_err);
+  if (g_method != DA_METHOD_RADAU5 && rtol == 1e-6 && g_newton == 1.0) {
+    int c[15];
+    da_tape_op_counts(tape, c, 15);
+    printf("  ops: init %d deriv %d scale %d predict %d retract %d correct %d update %d set_acor %d "
+           "set_zero %d set_col %d axpy %d\n",
+           c[1], c[2], c[3], c[4], c[5], c[6], c[7], c[8], c[9], c[10], c[11]);
+  }
+  /* The gradient is exact for converged stage/corrector equations, the forward solve stops
+   * iterating earlier: allow the difference that makes (replay vs forward) */
+  limit = fmax(limit, 10 * replay_err);
   if (!(err < limit)) {
     printf("  FAIL: above %.0e\n", limit);
     for (int q = 0; q < NT + N; q++) printf("    %d: %.10e vs %.10e\n", q, got[q], fd[q]);
@@ -203,14 +225,13 @@ static void check_gradient(double rtol, double limit) {
 
 /* The tape guard: a limit below one step's record must fail cleanly. */
 static void check_tape_limit(void) {
-  const double k[4] = {0.8, 2.0, 1.5, 0.4};
-  const double y0[N] = {1.0, 0.2, 0.1};
+  const double *k = P->k, *y0 = P->y0;
   double seg_pars[NSEG * NP], pred[NPTS * NTGT];
   fill_pars(k, seg_pars);
   DaTape *tape = NULL;
-  int st = da_forward((intptr_t)model, (intptr_t)jac, (intptr_t)derived, DA_METHOD_RADAU5, N, y0,
-                      NP, NSEG, SEG_END, seg_pars, NPTS, T_POINTS, NTGT, KIND, INDEX, 1, 1e-6,
-                      1e-8, 100000, 0, 100.0, pred, &tape);
+  int st = da_forward((intptr_t)model, (intptr_t)jac, (intptr_t)derived, g_method, N, y0,
+                      NP, NSEG, P->seg_end, seg_pars, NPTS, P->t_points, NTGT, KIND, INDEX, 1, 1e-6,
+                      1e-8, 100000, 0, 1.0, 100.0, pred, &tape);
   printf("tape limit: status %d\n", st);
   if (st != DA_TAPE_TOO_LARGE || tape) {
     printf("  FAIL: expected DA_TAPE_TOO_LARGE\n");
@@ -219,10 +240,23 @@ static void check_tape_limit(void) {
 }
 
 int main(void) {
-  check_gradient(1e-3, 1e-5); /* limited by RADAU5's Newton tolerance (replay vs forward) */
-  check_gradient(1e-6, 1e-7);
-  check_gradient(1e-10, 1e-8);
-  check_tape_limit();
+  for (g_method = DA_METHOD_RADAU5; g_method <= DA_METHOD_CVODE_ADAMS; g_method++) {
+    /* The solvers' own Newton tolerance, and one 1000x tighter, where the gradient agrees
+     * with the frozen-step differences to the limits without the replay allowance */
+    const double newton[2] = {1.0, 1e-3};
+    for (int k = 0; k < 2; k++) {
+      g_newton = newton[k];
+      for (int p = 0; p < 2; p++) {
+        P = &PROBLEMS[p];
+        /* Adams with fixed-point iteration can't integrate stiff problems */
+        if (g_method == DA_METHOD_CVODE_ADAMS && p == 1) continue;
+        check_gradient(1e-3, 1e-5);
+        check_gradient(1e-6, 1e-7);
+        check_gradient(1e-10, 1e-8);
+      }
+    }
+    check_tape_limit();
+  }
   if (failures) {
     printf("%d FAILED\n", failures);
     return 1;

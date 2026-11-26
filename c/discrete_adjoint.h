@@ -33,6 +33,9 @@
 #include <stdint.h>
 
 #define DA_METHOD_RADAU5 0
+#define DA_METHOD_LSODA 1
+#define DA_METHOD_CVODE_BDF 2
+#define DA_METHOD_CVODE_ADAMS 3
 
 /* Bits of da_forward's options. */
 #define DA_REUSE_JACOBIAN 1 /* RADAU5's tuned Jacobian reuse (mxn_radau's reuse_jacobian) */
@@ -56,6 +59,11 @@ typedef struct DaTape DaTape;
  * [0, seg_t_end[n_seg - 1]].
  * Targets: target_kind[k] 0 = state target_index[k], 1 = derived target
  * target_index[k] (derived must then be set).
+ * newton_scale (<= 0: 1) multiplies the solver's convergence tolerance of its
+ * Newton / corrector iterations (RADAU5's FNEWT, LSODA's conit, CVODE's
+ * nonlinear convergence coefficient): the gradient is exact for converged
+ * iterations, so a smaller one makes it agree better with the predictions,
+ * at the cost of a few more iterations.
  * On success *out_tape receives a tape the caller frees with da_free.
  * Returns 0, a negative solver IDID or one of the DA_* codes.
  */
@@ -63,7 +71,8 @@ int da_forward(intptr_t model, intptr_t jac, intptr_t derived, int method, int n
                const double *y0, int n_pars, int n_seg, const double *seg_t_end,
                const double *seg_pars, int n_points, const double *t_points, int n_targets,
                const int *target_kind, const int *target_index, int n_derived, double rtol,
-               double atol, int nmax, int options, double max_tape_bytes, double *out_pred,
+               double atol, int nmax, int options, double newton_scale, double max_tape_bytes,
+               double *out_pred,
                DaTape **out_tape);
 
 /*
@@ -88,6 +97,10 @@ int da_backward(DaTape *tape, intptr_t adjoint, intptr_t derived_grad, int n_the
 int da_replay(const DaTape *tape, const double *seg_pars, const double *y0, double *out_pred);
 
 void da_free(DaTape *tape);
+
+/* Diagnostics: operations of each kind on a Nordsieck tape's log (counts[code]
+ * for codes 1..14, see discrete_adjoint.c), 0 for RADAU5 tapes. */
+void da_tape_op_counts(const DaTape *tape, int *counts, int n_counts);
 
 /* Accepted steps on the tape and the bytes it holds. */
 int da_tape_steps(const DaTape *tape);

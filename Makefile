@@ -11,14 +11,16 @@ FIT = c/radau5_wrapper.c c/solver_common.c c/fit_experiments.c c/fit_wrapper.c c
 INC = -Ic $(SUNDIALS_INC)
 
 .PHONY: test lint clean
-test: build/test_solvers build/test_fit
+test: build/test_solvers build/test_fit build/test_discrete_adjoint
 	./build/test_solvers
 	./build/test_fit
+	./build/test_discrete_adjoint
 
 # The f2c output and SUNDIALS are left as upstream wrote them, so only our own C is held
 # to -Wall.
 lint:
-	$(CC) $(CFLAGS) -Wall -Wextra -Werror $(INC) -fsyntax-only c/mxs_lapack.c tests/test_solvers.c tests/test_fit.c
+	$(CC) $(CFLAGS) -Wall -Wextra -Werror $(INC) -fsyntax-only c/mxs_lapack.c c/discrete_adjoint.c tests/test_solvers.c tests/test_fit.c \
+		tests/test_discrete_adjoint.c
 
 build/test_solvers: tests/test_solvers.c $(SOLVERS) $(SUNDIALS) $(wildcard c/*.h) $(shell find c/sundials -name '*.h')
 	mkdir -p build
@@ -27,6 +29,13 @@ build/test_solvers: tests/test_solvers.c $(SOLVERS) $(SUNDIALS) $(wildcard c/*.h
 build/test_fit: tests/test_fit.c $(SOLVERS) $(FIT) $(wildcard c/*.h c/minpack/*.h)
 	mkdir -p build
 	$(CC) $(CFLAGS) -w $(INC) -o $@ tests/test_fit.c $(SOLVERS) $(FIT) -lm
+
+# Discrete adjoint (discretise-then-optimise) over taped RADAU5 steps.
+DISCRETE = c/discrete_adjoint.c
+
+build/test_discrete_adjoint: tests/test_discrete_adjoint.c $(SOLVERS) $(DISCRETE) $(wildcard c/*.h)
+	mkdir -p build
+	$(CC) $(CFLAGS) -w $(INC) -o $@ tests/test_discrete_adjoint.c $(SOLVERS) $(DISCRETE) -lm
 
 clean:
 	rm -rf build

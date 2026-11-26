@@ -5,7 +5,9 @@
 #   e.g. scripts/import-sundials.sh ~/src/sundials-7.9.0
 #
 # The source is a release of https://github.com/LLNL/sundials (tarball or checkout of the
-# tag). Files are copied unchanged. The only files in c/sundials/ that aren't upstream's are
+# tag). Files are copied unchanged, then scripts/patches/sundials-*.patch are applied (see
+# each patch's comments; today only the discrete-adjoint hooks on CVODE's Nordsieck array,
+# marked "mxl-solvers" in the code). The only files in c/sundials/ that aren't upstream's are
 # include/sundials/sundials_config.h and sundials_export.h, which CMake would generate; they
 # are kept by hand (see their headers) and this script leaves them alone.
 #
@@ -122,4 +124,7 @@ for f in "${files[@]}"; do
 done
 install -m 644 "$src/LICENSE" "$root/licences/SUNDIALS-LICENCE.txt"
 install -m 644 "$src/NOTICE" "$root/licences/SUNDIALS-NOTICE.txt"
+for p in "$root"/scripts/patches/sundials-*.patch; do
+    git -C "$root" apply "$p" || { echo "$p doesn't apply to SUNDIALS $VERSION; update it" >&2; exit 1; }
+done
 echo "imported ${#files[@]} files from SUNDIALS $VERSION into $dest"

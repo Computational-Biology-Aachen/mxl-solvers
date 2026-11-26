@@ -30,12 +30,12 @@ build/test_fit: tests/test_fit.c $(SOLVERS) $(FIT) $(wildcard c/*.h c/minpack/*.
 	mkdir -p build
 	$(CC) $(CFLAGS) -w $(INC) -o $@ tests/test_fit.c $(SOLVERS) $(FIT) -lm
 
-# Discrete adjoint (discretise-then-optimise) over taped RADAU5 steps.
+# Discrete adjoint (discretise-then-optimise) over taped RADAU5 steps and LSODA / CVODE operation logs.
 DISCRETE = c/discrete_adjoint.c
 
-build/test_discrete_adjoint: tests/test_discrete_adjoint.c $(SOLVERS) $(DISCRETE) $(wildcard c/*.h)
+build/test_discrete_adjoint: tests/test_discrete_adjoint.c $(SOLVERS) $(SUNDIALS) $(DISCRETE) $(wildcard c/*.h)
 	mkdir -p build
-	$(CC) $(CFLAGS) -w $(INC) -o $@ tests/test_discrete_adjoint.c $(SOLVERS) $(DISCRETE) -lm
+	$(CC) $(CFLAGS) -w $(INC) -o $@ tests/test_discrete_adjoint.c $(SOLVERS) $(SUNDIALS) $(DISCRETE) -lm
 
 clean:
 	rm -rf build

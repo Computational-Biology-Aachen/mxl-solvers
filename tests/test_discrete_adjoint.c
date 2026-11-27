@@ -9,6 +9,7 @@
 #include <string.h>
 
 #include "discrete_adjoint.h"
+#include "finite_jacobian.h"
 
 static int failures;
 static int g_method = DA_METHOD_RADAU5;
@@ -239,6 +240,66 @@ static void check_tape_limit(void) {
   }
 }
 
+/* A Jacobian that can't evaluate column 1 (as a symbolic derivative at an overflow):
+ * finite_jacobian replaces it by differences, so the gradient matches the exact one. */
+static void jac_nan(int n, double t, double *y, double *J, double *p) {
+  jac(n, t, y, J, p);
+  J[1 * n + 0] = NAN;
+}
+
+static void gradient_with(intptr_t jacobian, double *grad) {
+  double seg_pars[NSEG * NP], pred[NPTS * NTGT], cot[NPTS * NTGT], lam0[N];
+  for (int i = 0; i < NPTS * NTGT; i++) cot[i] = 1.0;
+  fill_pars(P->k, seg_pars);
+  DaTape *tape = NULL;
+  int st = da_forward((intptr_t)model, jacobian, (intptr_t)derived, g_method, N, P->y0, NP, NSEG,
+                      P->seg_end, seg_pars, NPTS, P->t_points, NTGT, KIND, INDEX, 1, 1e-8, 1e-10,
+                      100000, DA_FORWARD_JAC, 1.0, 0.0, pred, &tape);
+  if (st == 0) st = da_backward(tape, (intptr_t)adjoint, (intptr_t)derived_grad, NT, cot, grad, lam0);
+  if (st != 0) {
+    for (int q = 0; q < NT; q++) grad[q] = NAN;
+  }
+  da_free(tape);
+}
+
+static void check_nan_jacobian(void) {
+  double J[N * N], expected[N * N];
+  double y[N] = {0.7, 0.3, 0.2}, k[NP] = {0.8, 2.0, 1.5, 0.4, 0.1};
+  jac(N, 0.0, y, expected, k);
+  int replaced = finite_jacobian(model, jac_nan, N, 0.0, y, J, k);
+  double err = 0, scale = 0;
+  for (int i = 0; i < N * N; i++) {
+    double d = fabs(J[i] - expected[i]);
+    err = isnan(d) ? INFINITY : fmax(err, d); /* fmax alone would drop a NaN */
+    scale = fmax(scale, fabs(expected[i]));
+  }
+  err /= scale;
+  printf("finite_jacobian: %d column replaced, rel. error %.2e\n", replaced, err);
+  if (replaced != 1 || !(err < 1e-8)) {
+    printf("  FAIL\n");
+    failures++;
+  }
+  P = &PROBLEMS[0];
+  for (g_method = DA_METHOD_RADAU5; g_method <= DA_METHOD_CVODE_BDF; g_method++) {
+    double exact[NT], fallback[NT];
+    gradient_with((intptr_t)jac, exact);
+    gradient_with((intptr_t)jac_nan, fallback);
+    double e = 0, s = 0;
+    for (int q = 0; q < NT; q++) {
+      double d = fabs(fallback[q] - exact[q]);
+      e = isnan(d) ? INFINITY : fmax(e, d);
+      s = fmax(s, fabs(exact[q]));
+    }
+    e /= s;
+    printf("%s with a NaN Jacobian column: rel. gradient difference %.2e\n",
+           METHOD_NAMES[g_method], e);
+    if (!(e < 1e-6)) {
+      printf("  FAIL\n");
+      failures++;
+    }
+  }
+}
+
 int main(void) {
   for (g_method = DA_METHOD_RADAU5; g_method <= DA_METHOD_CVODE_ADAMS; g_method++) {
     /* The solvers' own Newton tolerance, and one 1000x tighter, where the gradient agrees
@@ -257,6 +318,7 @@ int main(void) {
     }
     check_tape_limit();
   }
+  check_nan_jacobian();
   if (failures) {
     printf("%d FAILED\n", failures);
     return 1;

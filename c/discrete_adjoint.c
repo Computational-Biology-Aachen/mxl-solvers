@@ -39,6 +39,7 @@
  * interpolation sum_j s^j Z_j, s = (t - tn) / h.
  */
 #include "discrete_adjoint.h"
+#include "finite_jacobian.h"
 
 #include "f2c.h"
 #include "lsoda.h"
@@ -305,7 +306,7 @@ static int rd_jac(integer *n, doublereal *x, doublereal *y, doublereal *dfy, int
                   doublereal *rpar, integer *ipar) {
   (void)ipar;
   (void)ldfy; /* full Jacobian: ldfy == n */
-  R.T->jac((int)*n, *x, y, dfy, rpar);
+  finite_jacobian(R.T->model, R.T->jac, (int)*n, *x, y, dfy, rpar);
   return 0;
 }
 
@@ -606,7 +607,7 @@ static void ls_jac(int *n, double *t, double *y, int *ml, int *mu, double *pd, i
   (void)ml;
   (void)mu;
   (void)nrowpd; /* full Jacobian: nrowpd == n */
-  R.T->jac(*n, *t, y, pd, R.pars);
+  finite_jacobian(R.T->model, R.T->jac, *n, *t, y, pd, R.pars);
 }
 
 /* Like mxn_lsoda (itask 1, one call per output time, its step budget), one
@@ -707,7 +708,8 @@ static int cv_jac(sunrealtype t, N_Vector y, N_Vector fy, SUNMatrix J, void *use
   (void)tmp2;
   (void)tmp3;
   /* SUNDenseMatrix data is column-major n x n */
-  R.T->jac((int)N_VGetLength(y), t, N_VGetArrayPointer(y), SM_DATA_D(J), R.pars);
+  finite_jacobian(R.T->model, R.T->jac, (int)N_VGetLength(y), t, N_VGetArrayPointer(y),
+                  SM_DATA_D(J), R.pars);
   return 0;
 }
 
@@ -984,7 +986,7 @@ static int rd_step_vjp(const DaTape *T, DaBack *B, int step, double *ybar, doubl
    * block (row j, column i) = delta_ji I - h a_ij J_j^T */
   for (int j = 0; j < 3; j++) {
     for (int i = 0; i < n; i++) stage[i] = y[i] + z[j * n + i];
-    T->jac(n, x + RC[j] * h, stage, J, pars);
+    finite_jacobian(T->model, T->jac, n, x + RC[j] * h, stage, J, pars);
     for (int i = 0; i < 3; i++) {
       const double f = -h * RA[i][j];
       for (int r = 0; r < n; r++) {
@@ -1174,7 +1176,7 @@ static int nt_backward(const DaTape *T, DaBack *B, const double *cotangent, doub
       double *y = (double *)(a + 5 + n);
       double *pars = T->seg_pars + (size_t)seg * (size_t)T->n_pars;
       /* (I - b c J^T) mu = acor_bar */
-      T->jac(n, t, y, J, pars);
+      finite_jacobian(T->model, T->jac, n, t, y, J, pars);
       for (int col = 0; col < n; col++) {
         for (int r = 0; r < n; r++) {
           double v = -b * c * J[col + (size_t)r * n]; /* J^T (r, col) */
@@ -1306,7 +1308,7 @@ static int rd_replay_step(const DaTape *T, double *rec, const double *y, const d
     for (int j = 0; j < 3; j++) {
       for (int i = 0; i < n; i++) stage[i] = y[i] + z[j * n + i];
       T->model(n, x + RC[j] * h, stage, F + j * n, (double *)pars);
-      T->jac(n, x + RC[j] * h, stage, J, (double *)pars);
+      finite_jacobian(T->model, T->jac, n, x + RC[j] * h, stage, J, (double *)pars);
       for (int i = 0; i < 3; i++) {
         const double f = -h * RA[i][j];
         for (int c = 0; c < n; c++) {
@@ -1445,7 +1447,7 @@ static int nt_replay(const DaTape *T, const double *seg_pars, const double *y0,
       for (int it = 0; it < 50; it++) {
         for (int i = 0; i < n; i++) y[i] = ZC(0)[i] + c * acor[i];
         T->model(n, t, y, f, (double *)pars);
-        T->jac(n, t, y, J, (double *)pars);
+        finite_jacobian(T->model, T->jac, n, t, y, J, (double *)pars);
         for (int i = 0; i < n; i++) G[i] = -(acor[i] + d * ZC(1)[i] - b * f[i]);
         for (int k = 0; k < n * n; k++) M[k] = -b * c * J[k];
         for (int i = 0; i < n; i++) M[i + (size_t)i * n] += 1.0;

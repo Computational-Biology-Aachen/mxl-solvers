@@ -212,6 +212,33 @@ static void test_vjp_protocol(void) {
     check("adjoint vjp protocol + experiments", rc == 0, fabs(grad[0] - fd) / fabs(fd), 1e-6);
 }
 
+/* x' = x^2 blows up at t = 1/x0: the failed solve must not look like a setup error */
+static void blowup(int n, double t, double *y, double *dy, double *p) {
+    (void)n; (void)t; (void)p;
+    dy[0] = y[0] * y[0];
+}
+static void blowup_adj(int n, double t, double *y, double *lam, double *p, double *dlam,
+                       double *dtheta) {
+    (void)n; (void)t; (void)p;
+    dlam[0] = -2.0 * y[0] * lam[0];
+    dtheta[0] = 0.0;
+}
+
+static void test_vjp_solve_failure(void) {
+    double y0[1] = {1.0}, pars[1] = {0.0}, t[1] = {4.0}, w[1] = {1.0}, seg_t_end[1] = {4.0};
+    double pred[1], grad[1], lam0[1];
+    int theta[1] = {0}, kind[1] = {TARGET_STATE}, idx[1] = {0};
+    int exp_kind[1] = {EXP_TIME_COURSE}, n_seg[1] = {1}, n_pts[1] = {1};
+    set_forward_model_fn((intptr_t)blowup);
+    set_adjoint_fn((intptr_t)blowup_adj);
+    int rc = adjoint_vjp(1, y0, 1, pars, 1, theta, 1, kind, idx, 0, NULL, 1, exp_kind, n_seg,
+                         n_pts, 1, seg_t_end, NULL, 1, t, w, 0, SOLVER_RADAU5, 1e-8, 1e-10,
+                         1e-10, 1e6, pred, grad, lam0);
+    printf("%-40s %s  (rc %d)\n", "adjoint vjp solve failure code", rc <= -1000 ? "ok  " : "FAIL",
+           rc);
+    if (rc > -1000) failures++;
+}
+
 static void test_adam(void) {
     double k_true = 0.7, t[6], data[6];
     for (int j = 0; j < 6; j++) {
@@ -303,6 +330,7 @@ int main(void) {
     test_vjp_time_course("adjoint vjp dopri5 time course", SOLVER_DOPRI5);
     test_vjp_steady_state();
     test_vjp_protocol();
+    test_vjp_solve_failure();
     test_adam();
     printf("%s\n", failures ? "FAILED" : "all passed");
     return failures ? 1 : 0;

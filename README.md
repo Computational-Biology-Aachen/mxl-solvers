@@ -89,9 +89,9 @@ Most tests are ported from the test suites of the codes' own authors and of othe
 
 What each file checks:
 - **`tests/test_problems.c`**:
-  - **Hairer's drivers** (`fortran/dr_dopri5.f`, `dr_dop853.f`, built with gfortran): the f2c translations reproduce their solutions and step statistics exactly.
+  - **Hairer's drivers** (`fortran/dr_dopri5.f`, `dr_dop853.f`, built with gfortran): the f2c translations reproduce their solutions and step statistics. They match exactly on x86-64 Linux, and within SUNDIALS' testRunner limits elsewhere.
   - **Bari test set:** HIRES, ROBER to 1e11, OREGO, E5 and VDPOL reach a set number of correct digits against the published references.
-  - **SUNDIALS' KPR test:** CVODE matches its golden statistics exactly.
+  - **SUNDIALS' KPR test:** CVODE matches its golden statistics, compared like SUNDIALS' own test runner (4 significant digits, ±10% on step counts; exact on x86-64 Linux).
   - **Jacobians:**
     - A transposed Jacobian is caught.
     - A user Jacobian is called and reused.

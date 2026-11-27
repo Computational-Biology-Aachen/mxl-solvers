@@ -210,8 +210,11 @@ static void check_gradient(double rtol, double limit) {
            c[1], c[2], c[3], c[4], c[5], c[6], c[7], c[8], c[9], c[10], c[11]);
   }
   /* The gradient is exact for converged stage/corrector equations, the forward solve stops
-   * iterating earlier: allow the difference that makes (replay vs forward) */
+   * iterating earlier: allow the difference that makes (replay vs forward). With the solvers'
+   * own Newton tolerance that estimate is platform-dependent (2.7e-6 vs 2.8e-8 for LSODA stiff
+   * at rtol 1e-6 on macOS), so allow 10 rtol too; the 1000x tighter Newton runs check exactness */
   limit = fmax(limit, 10 * replay_err);
+  if (g_newton == 1.0) limit = fmax(limit, 10 * rtol);
   if (!(err < limit)) {
     printf("  FAIL: above %.0e\n", limit);
     for (int q = 0; q < NT + N; q++) printf("    %d: %.10e vs %.10e\n", q, got[q], fd[q]);

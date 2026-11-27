@@ -6,6 +6,7 @@
  */
 
 #include "solver_common.h"
+#include <math.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -126,4 +127,31 @@ void clear_output_grid(void) {
     grid_n = grid_i = 0;
     free(grid_y);
     grid_y = NULL;
+}
+
+/* ------------------------------------------------------------------ */
+/* Input checks shared by every driver                                 */
+/* ------------------------------------------------------------------ */
+int check_run_input(int n, double t_start, double t_end, const double *y, double rtol, double atol,
+                    double h_init) {
+    if (n < 0 || !isfinite(t_start) || !isfinite(t_end) || !isfinite(rtol) || !isfinite(atol) ||
+        !isfinite(h_init) || rtol < 0 || atol < 0 || h_init < 0)
+        return 1;
+    for (int i = 0; i < n; i++)
+        if (!isfinite(y[i])) return 1;
+    grid_dir = t_end >= t_start ? 1.0 : -1.0;
+    for (int k = 0; grid_t && k < grid_n; k++) {
+        if (!((grid_t[k] - t_start) * grid_dir >= 0 && (t_end - grid_t[k]) * grid_dir >= 0)) return 1;
+        if (k > 0 && (grid_t[k] - grid_t[k - 1]) * grid_dir < 0) return 1;
+    }
+    return 0;
+}
+
+void record_trivial_run(double t_start, double t_end, const double *y) {
+    if (grid_t) {
+        for (; grid_i < grid_n; grid_i++) record_point(grid_t[grid_i], y);
+    } else {
+        record_point(t_start, y);
+        if (t_end != t_start) record_point(t_end, y);
+    }
 }

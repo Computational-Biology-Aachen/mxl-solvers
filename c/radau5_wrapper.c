@@ -15,7 +15,6 @@
 #include "f2c.h"
 #include "lsoda.h"
 #include "solver_common.h"
-#include <math.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -111,39 +110,6 @@ static int solout_dispatch(integer *nr, doublereal *xold, doublereal *x,
     }
     *irtrn = 1; /* continue */
     return 0;
-}
-
-/* ------------------------------------------------------------------ */
-/* Input checks shared by every driver                                 */
-/* ------------------------------------------------------------------ */
-/* Refuses what the solvers would otherwise turn into nonsense or an endless loop: a
- * non-finite span, state, tolerance or initial step, negative tolerances or initial step, and
- * a grid that isn't monotone in the direction of integration or leaves [t_start, t_end].
- * Returns 0 if the input is usable. Sets grid_dir for record_grid_until. */
-static int bad_input(int n, double t_start, double t_end, const double *y, double rtol, double atol,
-                     double h_init) {
-    if (n < 0 || !isfinite(t_start) || !isfinite(t_end) || !isfinite(rtol) || !isfinite(atol) ||
-        !isfinite(h_init) || rtol < 0 || atol < 0 || h_init < 0)
-        return 1;
-    for (int i = 0; i < n; i++)
-        if (!isfinite(y[i])) return 1;
-    grid_dir = t_end >= t_start ? 1.0 : -1.0;
-    for (int k = 0; grid_t && k < grid_n; k++) {
-        if (!((grid_t[k] - t_start) * grid_dir >= 0 && (t_end - grid_t[k]) * grid_dir >= 0)) return 1;
-        if (k > 0 && (grid_t[k] - grid_t[k - 1]) * grid_dir < 0) return 1;
-    }
-    return 0;
-}
-
-/* Nothing to integrate (t_start == t_end, or no state): records the grid, or t_start, with
- * y unchanged. The solvers themselves fail on a zero-length span (IDID -3) or n == 0. */
-static void trivial_run(double t_start, double t_end, const double *y) {
-    if (grid_t) {
-        for (; grid_i < grid_n; grid_i++) record_point(grid_t[grid_i], y);
-    } else {
-        record_point(t_start, y);
-        if (t_end != t_start) record_point(t_end, y);
-    }
 }
 
 /* The status of a run whose output buffer couldn't grow: the recorded points are incomplete. */
@@ -244,10 +210,10 @@ static int drive(int (*impl)(int, double, double, double *, double *, double, do
                  int n, double t_start, double t_end, double *y, double *rpar, double rtol, double atol,
                  double h_init, int nmax, int tuned, int bad_input_code, int success_code) {
     int status;
-    if (bad_input(n, t_start, t_end, y, rtol, atol, h_init)) {
+    if (check_run_input(n, t_start, t_end, y, rtol, atol, h_init)) {
         status = bad_input_code;
     } else if (n == 0 || t_start == t_end) {
-        trivial_run(t_start, t_end, y);
+        record_trivial_run(t_start, t_end, y);
         status = success_code;
     } else if (grid_t && !(grid_y = (double *)malloc((size_t)n * sizeof(double)))) {
         status = OUTPUT_ALLOC_FAILED;

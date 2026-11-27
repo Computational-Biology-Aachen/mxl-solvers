@@ -108,8 +108,10 @@ static void mgh(int use_lmder) {
             /* The final residual norm is what's portable: evaluation counts and the exit code
              * shift with FMA contraction and libm on the rounding-sensitive problems (zero
              * residuals, Powell singular, Kowalik-Osborne), as on macOS arm64. */
-            int ok = r && r->nprob == nprob && r->n == n && r->m == m && info > 0 &&
-                     close_rel(fnorm, r->fnorm, 1e-2, 1e-10) && c.nfev <= 10 * r->nfev + 50 && isfinite(fnorm);
+            /* A run that ran out of evaluations (info 5) stops wherever the budget ends, so only
+             * converged reference runs pin a norm. */
+            int ok = r && r->nprob == nprob && r->n == n && r->m == m && info > 0 && isfinite(fnorm) &&
+                     (r->info == 5 || close_rel(fnorm, r->fnorm, 1e-2, 1e-10)) && c.nfev <= 10 * r->nfev + 50;
             if (!ok) {
                 bad++;
                 printf("     problem %2d n=%2d m=%2d try %d: info %d nfev %d fnorm %.7e; reference info %d nfev %d "

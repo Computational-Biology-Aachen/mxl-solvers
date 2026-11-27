@@ -48,15 +48,17 @@ static double *out_y  = NULL;
 static int     out_n  = 0;   /* number of accepted steps stored */
 static int     out_cap = 0;
 static int     out_dim = 0;
+static int     out_failed_flag = 0;
 
 void init_output(int capacity, int dim) {
     free(out_t);
     free(out_y);
-    out_t   = (double *)malloc((size_t)capacity * sizeof(double));
-    out_y   = (double *)malloc((size_t)capacity * (size_t)dim * sizeof(double));
+    out_t   = (double *)malloc((size_t)(capacity > 0 ? capacity : 1) * sizeof(double));
+    out_y   = (double *)malloc((size_t)(capacity > 0 ? capacity : 1) * (size_t)(dim > 0 ? dim : 1) * sizeof(double));
     out_n   = 0;
-    out_cap = capacity;
+    out_cap = (out_t && out_y) ? capacity : 0;
     out_dim = dim;
+    out_failed_flag = !(out_t && out_y);
 }
 
 void free_output(void) {
@@ -79,10 +81,10 @@ void record_point(double t, const double *y) {
     if (out_n == out_cap) {
         int new_cap = out_cap * 2;
         double *nt = (double *)realloc(out_t, (size_t)new_cap * sizeof(double));
-        if (!nt) return;
-        out_t = nt;
+        if (!nt) { out_failed_flag = 1; return; }
+        out_t = nt; /* still holds out_cap points; out_cap grows only once both have */
         double *ny = (double *)realloc(out_y, (size_t)new_cap * (size_t)out_dim * sizeof(double));
-        if (!ny) return;
+        if (!ny) { out_failed_flag = 1; return; }
         out_y = ny;
         out_cap = new_cap;
     }
@@ -91,6 +93,8 @@ void record_point(double t, const double *y) {
     out_n++;
 }
 
+int output_failed(void) { return out_failed_flag; }
+
 /* Evaluates the registered model RHS once, outside any integrator — used
  * by fit_wrapper.c's steady-state convergence check (||dy/dt||). */
 void eval_rhs(int n, double t, double *y, double *dydt, double *pars) {
@@ -98,15 +102,17 @@ void eval_rhs(int n, double t, double *y, double *dydt, double *pars) {
 }
 
 /* ------------------------------------------------------------------ */
-/* Optional output grid (RADAU5 and LSODA)                             */
+/* Optional output grid (every driver in radau5_wrapper.c)             */
 /* ------------------------------------------------------------------ */
-/* When set, run_radau5 records the collocation polynomial at exactly these
- * ascending times instead of one point per accepted step, and run_lsoda its
- * own interpolant. Consumed by the next run_radau5 or run_lsoda and then
- * cleared; the array must stay valid until it returns. */
+/* When set, the next run_* call records its solver's continuous output (RADAU5's collocation
+ * polynomial, DOP853's / DOPRI5's dense output, LSODA's interpolant) at exactly these times,
+ * monotone in the direction of integration and inside the span, instead of one point per
+ * accepted step. Consumed by that call and then cleared; the array must stay valid until it
+ * returns. */
 const double *grid_t = NULL;
 int grid_n = 0;
 int grid_i = 0;
+double grid_dir = 1.0;
 double *grid_y = NULL;
 
 void set_output_grid(const double *t, int n) {

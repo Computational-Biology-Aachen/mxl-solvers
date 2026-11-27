@@ -8,7 +8,7 @@ The C ODE solvers and fit drivers shared by [MxlPy](https://github.com/Computati
 | `c/dopri5.c`, `c/dop853.c` | Explicit Runge-Kutta 5(4) and 8(5,3) | Hairer & Wanner via f2c | `licences/HAIRER-LICENCE.txt` |
 | `c/decsol.c`, `c/dc_decsol.c` | Linear algebra for RADAU5 | Hairer & Wanner via f2c | `licences/HAIRER-LICENCE.txt` |
 | `c/f2c.h`, `c/libf2c_stubs.c` | The parts of libf2c the f2c output needs | f2c | |
-| `c/lsoda.c`, `c/lsoda.h` | LSODA, switching automatically between Adams (non-stiff) and BDF (stiff) | SciPy `scipy/integrate/src` at main d1d4a8aa11 (v1.18.1 plus the fix that honours the minimum step `RWORK(7)`, scipy/scipy#26092), plus optional discrete-adjoint hooks (`nordsieck_tape.h`, unset = unchanged behaviour) and a corrector-convergence factor (`conit_scale`). Otherwise the code `scipy.integrate` runs. | `licences/SCIPY-LICENCE.txt` |
+| `c/lsoda.c`, `c/lsoda.h` | LSODA, switching automatically between Adams (non-stiff) and BDF (stiff) | SciPy `scipy/integrate/src` at main d1d4a8aa11 (the merge of scipy/scipy#26092, which honours the minimum step `RWORK(7)`; still SciPy's latest `lsoda.c` on 2026-11-27), plus optional discrete-adjoint hooks (`nordsieck_tape.h`, unset = unchanged behaviour), a corrector-convergence factor (`conit_scale`) and the local fixes below. Otherwise the code `scipy.integrate` runs. | `licences/SCIPY-LICENCE.txt` |
 | `c/sundials/` | CVODE: variable-order BDF (stiff) and Adams-Moulton (non-stiff), with dense/band matrices, the dense direct linear solver and Newton/fixed-point iteration | [SUNDIALS](https://github.com/LLNL/sundials) v7.9.0 (tag `v7.9.0`), upstream layout, unchanged except the two config headers (below) and `scripts/patches/sundials-nordsieck-tape.patch` (discrete-adjoint hooks on the Nordsieck array, re-applied by `scripts/import-sundials.sh`) | `licences/SUNDIALS-LICENCE.txt` (BSD-3-Clause), `licences/SUNDIALS-NOTICE.txt` |
 | `c/radau5_wrapper.c`, `c/solver_common.{c,h}` | Single-segment drivers for RADAU5, DOP853, DOPRI5 and LSODA, the registered model function and the output buffer / exact output grid | Written for mxlweb-core | `LICENSE` |
 | `c/fit_experiments.{c,h}` | Experiment layout of the fit drivers: time courses with piecewise-constant parameter protocols and steady states, residuals | Written for mxlweb-core | `LICENSE` |
@@ -20,13 +20,21 @@ The C ODE solvers and fit drivers shared by [MxlPy](https://github.com/Computati
 
 `fortran/` keeps the Hairer originals and their example drivers (`dr_*.f`).
 
-## Local changes to `radau5.c`
+## Local changes to vendored code
 
-`radau5.c` isn't the plain f2c output any more:
-- Non-finite steps are rejected.
-- `radau5_jac_growth` limits how far the step size can grow while a Jacobian is reused.
+These files aren't plain upstream code any more. Don't regenerate or replace them without carrying the changes over.
 
-Don't regenerate it from `fortran/radau5.f` without carrying these changes over.
+- `radau5.c`:
+  - Non-finite steps are rejected.
+  - `radau5_jac_growth` limits how far the step size can grow while a Jacobian is reused.
+- `dopri5.c`, `dop853.c`: a step whose error estimate or new state isn't finite is rejected like any other large error. Before, a NaN estimate also made the next step size NaN, and the code spun until NMAX instead of stopping with IDID -3.
+- `decsol.c`: `DEC` and its variants return at once for n = 0, instead of writing `IP(0)` out of bounds.
+- `lsoda.c`:
+  - `vmnorm` returns NaN if any component is NaN. It used `fmax`, which drops a NaN operand, so a non-finite state passed the convergence and error tests as if it were exact, and LSODA returned success with NaN or Inf.
+  - The local error test is written so that a NaN estimate fails it.
+  - `lsoda_intdy` exposes LSODA's interpolant, for `run_lsoda`'s output grid.
+- `minpack/fdjac2.c`: x is restored before returning when the function aborts during the finite-difference Jacobian. This is cminpack's own later fix (devernay/cminpack#89).
+
 
 ## SUNDIALS
 
@@ -65,13 +73,74 @@ that uses CVODE through these solvers should cite SUNDIALS as its authors ask
 ## Tests
 
 ```bash
-make test   # reference problems for every solver, as relative errors
+make test   # every test below, errors as relative errors
 make lint   # -Wall -Wextra -Werror on the code written here
+make asan   # every test again under AddressSanitizer + UndefinedBehaviorSanitizer
 ```
 
-`tests/test_fit.c` fits problems with known optima: exponential decay with both Levenberg-Marquardt drivers (RADAU5 and LSODA, linear and log parameters) to 1e-8 relative precision, and the parameter ratio of a reversible reaction at steady state. It checks `adjoint_vjp` against analytic gradients (exponential decay with a state and a derived target on RADAU5, LSODA and DOPRI5, and a reversible reaction's steady state with its conserved total) to 1e-6 relative precision, and that Adam over the adjoint fits the decay rate.
+Most tests are ported from the test suites of the codes' own authors and of other ODE packages. `tests/test_*.c` name the test each check comes from. The sources:
+- Hairer's example drivers
+- SUNDIALS' unit tests and example outputs
+- SciPy's `scipy.integrate` tests
+- cminpack's examples
+- the Bari/CWI IVP test set
+- the SciML packages (OrdinaryDiffEq, DiffEqProblemLibrary, ODEInterfaceDiffEq, Sundials.jl, SciMLSensitivity, NonlinearSolve, LinearSolve)
+- the equinox family (diffrax, optimistix, lineax)
 
-`tests/test_solvers.c` checks Robertson against Hairer & Wanner's reference values (RADAU5, LSODA with full and banded Jacobians, and CVODE BDF), and that LSODA stops on Robertson when given a minimum step too large for its initial transient. It checks that Lotka-Volterra's first integral stays constant (LSODA, DOPRI5, DOP853, RADAU5, CVODE Adams and BDF), and that Van der Pol agrees with a tight DOP853 solution.
+What each file checks:
+- **`tests/test_problems.c`**:
+  - **Hairer's drivers** (`fortran/dr_dopri5.f`, `dr_dop853.f`, built with gfortran): the f2c translations reproduce their solutions and step statistics exactly.
+  - **Bari test set:** HIRES, ROBER to 1e11, OREGO, E5 and VDPOL reach a set number of correct digits against the published references.
+  - **SUNDIALS' KPR test:** CVODE matches its golden statistics exactly.
+  - **Jacobians:**
+    - A transposed Jacobian is caught.
+    - A user Jacobian is called and reused.
+    - Banded LSODA in every Jacobian mode agrees with the full one.
+  - **Stepping:**
+    - LSODA switches from Adams to BDF on a stiff problem.
+    - RADAU5 handles Van der Pol up to mu = 1e10.
+    - The error is proportional to the tolerance.
+    - Each method reaches its convergence order.
+    - Polynomials are integrated exactly.
+    - Pure relative tolerances (atol = 0) work.
+- **`tests/test_wrappers.c`**: the contracts of the `run_*` drivers and the output grid, for every solver:
+  - **Endpoints and grid:**
+    - t0 == t1.
+    - Grid times come back exactly.
+    - Asking for a grid doesn't change the steps.
+    - Repeated grid times work.
+  - **Direction:**
+    - Backward integration works.
+    - Mirrored problems take mirrored steps.
+  - **Failures:** a NaN right-hand side, a blow-up or an overflow fails fast.
+  - **Input:** bad input (non-finite span or state, a non-monotone grid or one outside the span) is refused.
+  - **Options and state:**
+    - nmax and h_init are honoured.
+    - The right-hand side is never evaluated outside [t0, t1].
+    - Repeated solves are bitwise identical.
+    - n = 0 works.
+- **`tests/test_linalg.c`**: `DEC`/`SOL` and the LAPACK subset, on well-conditioned, pivoting, singular, empty and banded systems.
+- **`tests/test_minpack.c`**:
+  - cminpack's Moré–Garbow–Hillstrom suite against its reference output (`tests/cminpack/`).
+  - The tlmdif/tlmder fits.
+  - Regression tests for cminpack issues #76 and #89.
+
+- **`tests/test_fit.c`**:
+  - **Known optima:**
+    - Exponential decay, fitted with both Levenberg-Marquardt drivers (RADAU5 and LSODA, linear and log parameters) to 1e-8 relative precision.
+    - The parameter ratio of a reversible reaction at steady state.
+  - **`adjoint_vjp`:**
+    - Against analytic gradients: exponential decay with a state and a derived target on RADAU5, LSODA and DOPRI5, and a reversible reaction's steady state with its conserved total, to 1e-6 relative precision.
+    - Against CVODES's Lotka-Volterra adjoint example.
+    - Against SciMLSensitivity's steady-state problem, where d u* / d u0 = 0.
+    - Against a falling mass, whose data point at t0 and unused parameter have exact gradients.
+  - **Adam:** it fits the decay rate, and it refuses a NaN gradient.
+  - **Input checks:**
+    - The fit drivers validate their input.
+    - A chunk smaller than one iteration doesn't return "improper input".
+    - A NaN model value is penalised rather than passed to MINPACK.
+
+- **`tests/test_solvers.c`** checks Robertson against Hairer & Wanner's reference values (RADAU5, LSODA with full and banded Jacobians, and CVODE BDF), and that LSODA stops on Robertson when given a minimum step too large for its initial transient. It checks that Lotka-Volterra's first integral stays constant (LSODA, DOPRI5, DOP853, RADAU5, CVODE Adams and BDF), and that Van der Pol agrees with a tight DOP853 solution.
 
 ## Using these files in another repo
 

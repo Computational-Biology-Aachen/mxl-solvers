@@ -25,13 +25,18 @@ int get_out_n(void);
 double *get_out_t(void);
 double *get_out_y(void);
 void record_point(double t, const double *y);
+/* Set when init_output or record_point couldn't allocate and a point was dropped; the
+ * drivers then fail with -9 instead of returning an incomplete trajectory. */
+int output_failed(void);
 
 /* Output grid: when grid_t is set, solvers record exactly these times
  * (grid_i is the next one) instead of every step. grid_y is scratch space
- * for interpolated states. Solvers clear the grid when they return. */
+ * for interpolated states, grid_dir the direction of integration (+1 / -1).
+ * Solvers clear the grid when they return. */
 extern const double *grid_t;
 extern int grid_n;
 extern int grid_i;
+extern double grid_dir;
 extern double *grid_y;
 void set_output_grid(const double *t, int n);
 void clear_output_grid(void);

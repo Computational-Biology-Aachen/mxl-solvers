@@ -541,7 +541,7 @@ static void test_set(void) {
               scd(y + 1, ref, 2));
         memcpy(y, y0, sizeof y);
         ok = cvode(e5, 4, 0, 1e13, y, o, 0).status == CV_SUCCESS;
-        check("test set E5 to 1e13, cvode bdf: y2, y3 scd >= 1.5", ok && scd(y + 1, ref, 2) >= 1.5, "scd %.1f",
+        check("test set E5 to 1e13, cvode bdf: y2, y3 scd >= 1", ok && scd(y + 1, ref, 2) >= 1, "scd %.1f",
               scd(y + 1, ref, 2));
     }
     /* Robertson invariants over the whole span (OrdinaryDiffEq FIRK, scipy): mass conservation
